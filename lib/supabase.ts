@@ -23,6 +23,7 @@ export interface Categoria {
   descricao?: string
   ativo: boolean
   created_at: string
+  updated_at: string
 }
 
 export interface Prateleira {
@@ -66,4 +67,34 @@ export interface Movimentacao {
   created_at: string
   produtos?: Produto
   funcionarios?: Funcionario
+}
+
+// Tipos para formulários (sem campos automáticos)
+export type FuncionarioInput = Omit<Funcionario, "id" | "created_at" | "updated_at">
+export type CategoriaInput = Omit<Categoria, "id" | "created_at" | "updated_at">
+export type PrateleiraInput = Omit<Prateleira, "id" | "created_at" | "updated_at">
+export type ProdutoInput = Omit<Produto, "id" | "created_at" | "updated_at" | "categorias">
+export type MovimentacaoInput = Omit<Movimentacao, "id" | "created_at" | "produtos" | "funcionarios">
+
+// Funções auxiliares
+export function isAuthenticated(): boolean {
+  if (typeof window === "undefined") return false
+  const savedUser = localStorage.getItem("cpb-user")
+  return !!savedUser
+}
+
+export function getCurrentUser(): Funcionario | null {
+  if (typeof window === "undefined") return null
+  const savedUser = localStorage.getItem("cpb-user")
+  if (!savedUser) return null
+  try {
+    return JSON.parse(savedUser)
+  } catch {
+    return null
+  }
+}
+
+export function isSupervisor(): boolean {
+  const user = getCurrentUser()
+  return user?.tipo === "supervisor"
 }
