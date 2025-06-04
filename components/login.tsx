@@ -8,7 +8,9 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Label } from "@/components/ui/label"
-import { Phone, Lock, Store } from "lucide-react"
+import { Phone, Lock, Store, AlertCircle } from "lucide-react"
+import { Alert, AlertDescription } from "@/components/ui/alert"
+import { useRouter } from "next/navigation"
 
 export function Login() {
   const [telefone, setTelefone] = useState("")
@@ -16,22 +18,32 @@ export function Login() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState("")
   const { login } = useAuth()
+  const router = useRouter()
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setLoading(true)
     setError("")
 
-    console.log("Dados do formulário:", { telefone, senha }) // Debug
+    try {
+      console.log("Tentativa de login:", { telefone, senha: "***" }) // Debug sem mostrar senha
 
-    const success = await login(telefone, senha)
+      const success = await login(telefone, senha)
 
-    if (!success) {
-      setError("Telefone ou senha incorretos")
+      if (success) {
+        console.log("Login realizado com sucesso, redirecionando...")
+      } else {
+        setError("Telefone ou senha incorretos. Verifique suas credenciais.")
+      }
+    } catch (err) {
+      console.error("Erro no login:", err)
+      setError("Erro interno do sistema. Tente novamente.")
+    } finally {
+      setLoading(false)
     }
-
-    setLoading(false)
   }
+
+
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center p-4">
@@ -58,8 +70,9 @@ export function Login() {
                   type="tel"
                   placeholder="Digite seu telefone"
                   value={telefone}
-                  onChange={(e) => setTelefone(e.target.value)}
+                  onChange={(e) => setTelefone(e.target.value.replace(/\D/g, ""))} // Apenas números
                   className="pl-10"
+                  maxLength={9}
                   required
                 />
               </div>
@@ -79,20 +92,18 @@ export function Login() {
                 />
               </div>
             </div>
-            {error && <div className="text-red-600 text-sm text-center">{error}</div>}
+
+            {error && (
+              <Alert variant="destructive">
+                <AlertCircle className="h-4 w-4" />
+                <AlertDescription>{error}</AlertDescription>
+              </Alert>
+            )}
+
             <Button type="submit" className="w-full" disabled={loading}>
               {loading ? "Entrando..." : "Entrar"}
             </Button>
           </form>
-          <div className="mt-6 p-3 bg-gray-50 rounded-lg">
-            <p className="text-xs text-gray-600 text-center">
-              <strong>Usuário padrão:</strong>
-              <br />
-              Telefone: 948324028
-              <br />
-              Senha: Onrails.2019!
-            </p>
-          </div>
         </CardContent>
       </Card>
     </div>
