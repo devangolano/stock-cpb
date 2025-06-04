@@ -3,7 +3,7 @@
 import type React from "react"
 
 import { useEffect, useState } from "react"
-import { prateleirasService } from "@/lib/database"
+import { supabase } from "@/lib/supabase"
 import type { PrateleiraInput } from "@/lib/supabase"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -27,6 +27,7 @@ export function PrateleiraForm({ prateleiraId, onBack, onSave }: PrateleiraFormP
   const { user } = useAuth()
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [originalNumero, setOriginalNumero] = useState<string>("")
   const [prateleira, setPrateleira] = useState<PrateleiraInput>({
     numero: "",
     descricao: "",
@@ -49,11 +50,24 @@ export function PrateleiraForm({ prateleiraId, onBack, onSave }: PrateleiraFormP
       setLoading(true)
       setError(null)
 
-      const data = await prateleirasService.getById(prateleiraId)
+      console.log("Carregando prateleira com ID:", prateleiraId)
+
+      // Usar consulta direta ao Supabase para evitar problemas de RLS
+      const { data, error } = await supabase.from("prateleiras").select("*").eq("id", prateleiraId).single()
+
+      if (error) {
+        console.error("Erro do Supabase:", error)
+        throw new Error(`Erro ao buscar prateleira: ${error.message}`)
+      }
 
       if (!data) {
         throw new Error("Prateleira não encontrada")
       }
+
+      console.log("Prateleira carregada:", data)
+
+      // Salvar o número original para verificação de duplicatas
+      setOriginalNumero(data.numero)
 
       setPrateleira({
         numero: data.numero,
@@ -90,13 +104,40 @@ export function PrateleiraForm({ prateleiraId, onBack, onSave }: PrateleiraFormP
     }))
   }
 
-  const validateForm = (): string | null => {
+  const checkDuplicateNumero = async (numero: string): Promise<boolean> => {
+    try {
+      // Se estamos editando e o número não mudou, não é duplicata
+      if (isEdit && numero === originalNumero) {
+        return false
+      }
+
+      const { data, error } = await supabase.from("prateleiras").select("id").eq("numero", numero.trim()).limit(1)
+
+      if (error) {
+        console.error("Erro ao verificar duplicata:", error)
+        return false // Em caso de erro, permitir continuar
+      }
+
+      return data && data.length > 0
+    } catch (error) {
+      console.error("Erro na verificação de duplicata:", error)
+      return false
+    }
+  }
+
+  const validateForm = async (): Promise<string | null> => {
     if (!prateleira.numero.trim()) {
       return "O número da prateleira é obrigatório"
     }
 
     if (prateleira.numero.length < 2) {
       return "O número da prateleira deve ter pelo menos 2 caracteres"
+    }
+
+    // Verificar duplicatas
+    const isDuplicate = await checkDuplicateNumero(prateleira.numero)
+    if (isDuplicate) {
+      return `Já existe uma prateleira com o número "${prateleira.numero}". Escolha um número diferente.`
     }
 
     return null
@@ -114,25 +155,71 @@ export function PrateleiraForm({ prateleiraId, onBack, onSave }: PrateleiraFormP
       return
     }
 
-    // Validar formulário
-    const validationError = validateForm()
-    if (validationError) {
-      setError(validationError)
-      return
-    }
-
     try {
       setLoading(true)
       setError(null)
 
+      // Validar formulário (incluindo verificação de duplicatas)
+      const validationError = await validateForm()
+      if (validationError) {
+        setError(validationError)
+        return
+      }
+
+      console.log("Salvando prateleira:", { isEdit, prateleiraId, prateleira, originalNumero })
+
       if (isEdit && prateleiraId) {
-        await prateleirasService.update(prateleiraId, prateleira)
+        // Atualizar prateleira existente
+        const { error } = await supabase
+          .from("prateleiras")
+          .update({
+            numero: prateleira.numero.trim(),
+            descricao: prateleira.descricao?.trim() || null,
+            ativo: prateleira.ativo,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", prateleiraId)
+
+        if (error) {
+          console.error("Erro ao atualizar:", error)
+
+          // Tratar erro específico de duplicata
+          if (error.code === "23505") {
+            throw new Error(
+              `Já existe uma prateleira com o número "${prateleira.numero}". Escolha um número diferente.`,
+            )
+          }
+
+          throw new Error(`Erro ao atualizar prateleira: ${error.message}`)
+        }
+
         toast({
           title: "Prateleira atualizada",
           description: "A prateleira foi atualizada com sucesso.",
         })
       } else {
-        await prateleirasService.create(prateleira)
+        // Criar nova prateleira
+        const { error } = await supabase.from("prateleiras").insert([
+          {
+            numero: prateleira.numero.trim(),
+            descricao: prateleira.descricao?.trim() || null,
+            ativo: prateleira.ativo,
+          },
+        ])
+
+        if (error) {
+          console.error("Erro ao criar:", error)
+
+          // Tratar erro específico de duplicata
+          if (error.code === "23505") {
+            throw new Error(
+              `Já existe uma prateleira com o número "${prateleira.numero}". Escolha um número diferente.`,
+            )
+          }
+
+          throw new Error(`Erro ao criar prateleira: ${error.message}`)
+        }
+
         toast({
           title: "Prateleira cadastrada",
           description: "A prateleira foi cadastrada com sucesso.",
@@ -213,7 +300,12 @@ export function PrateleiraForm({ prateleiraId, onBack, onSave }: PrateleiraFormP
                   disabled={loading}
                   className={error && !prateleira.numero.trim() ? "border-red-500" : ""}
                 />
-                <p className="text-xs text-gray-500">Identificação única da prateleira (mínimo 2 caracteres)</p>
+                <p className="text-xs text-gray-500">
+                  Identificação única da prateleira (mínimo 2 caracteres)
+                  {isEdit && originalNumero && (
+                    <span className="block text-blue-600">Número atual: {originalNumero}</span>
+                  )}
+                </p>
               </div>
 
               <div className="space-y-2">
@@ -260,18 +352,23 @@ export function PrateleiraForm({ prateleiraId, onBack, onSave }: PrateleiraFormP
         </CardContent>
       </Card>
 
-      {/* Informações de ajuda */}
-      <Card className="mt-6 bg-blue-50 border-blue-200">
-        <CardContent className="pt-6">
-          <h4 className="font-medium text-blue-900 mb-2">💡 Dicas para cadastro de prateleiras:</h4>
-          <ul className="text-sm text-blue-800 space-y-1">
-            <li>• Use códigos simples e organizados (ex: A01, A02, B01, B02)</li>
-            <li>• Mantenha um padrão de nomenclatura consistente</li>
-            <li>• A descrição pode incluir localização física ou tipo de produtos</li>
-            <li>• Prateleiras inativas ficam ocultas mas mantêm o histórico</li>
-          </ul>
-        </CardContent>
-      </Card>
+      {/* Debug info (remover em produção) */}
+      {process.env.NODE_ENV === "development" && (
+        <Card className="mt-6 bg-gray-50 border-gray-200">
+          <CardContent className="pt-6">
+            <h4 className="font-medium text-gray-900 mb-2">🔧 Debug Info:</h4>
+            <div className="text-xs text-gray-600 space-y-1">
+              <div>
+                Usuário: {user?.nome} ({user?.tipo})
+              </div>
+              <div>Prateleira ID: {prateleiraId || "Nova"}</div>
+              <div>É Edição: {isEdit ? "Sim" : "Não"}</div>
+              <div>Número Original: {originalNumero || "N/A"}</div>
+              <div>Número Atual: {prateleira.numero}</div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
     </div>
   )
 }

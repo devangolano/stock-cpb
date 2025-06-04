@@ -4,7 +4,8 @@ import { useEffect, useState } from "react"
 import { supabase } from "@/lib/supabase"
 import { Card, CardContent } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
-import { Package, AlertCircle } from "lucide-react"
+import { Input } from "@/components/ui/input"
+import { Package, AlertCircle, ShellIcon as Shelf, Search, ArrowLeft, Eye, Edit, Trash2 } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { useToast } from "@/hooks/use-toast"
 
@@ -14,12 +15,14 @@ interface PrateleiraDashboard {
   descricao: string
   totalProdutos: number
   produtosAbaixoMinimo: number
+  ativo: boolean
 }
 
 interface ProdutoPrateleira {
   id: string
   codigo: string
   nome: string
+  preco_venda: number
   estoque_loja: number
   estoque_armazem: number
   estoque_minimo: number
@@ -27,15 +30,26 @@ interface ProdutoPrateleira {
 
 interface DashboardProps {
   onNavigateToProduct?: (productId: string) => void
+  onNavigateToEdit?: (productId: string) => void
+  onNavigateToView?: (productId: string) => void
+  onNavigateToCreate?: () => void
 }
 
-export function Dashboard({ onNavigateToProduct }: DashboardProps) {
+export function Dashboard({
+  onNavigateToProduct,
+  onNavigateToEdit,
+  onNavigateToView,
+  onNavigateToCreate,
+}: DashboardProps) {
   const { toast } = useToast()
   const [prateleiras, setPrateleiras] = useState<PrateleiraDashboard[]>([])
   const [produtosPrateleira, setProdutosPrateleira] = useState<ProdutoPrateleira[]>([])
   const [prateleiraAtual, setPrateleiraAtual] = useState<string | null>(null)
+  const [searchTerm, setSearchTerm] = useState("")
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [currentPage, setCurrentPage] = useState(1)
+  const itemsPerPage = 10
 
   useEffect(() => {
     loadPrateleiras()
@@ -45,58 +59,63 @@ export function Dashboard({ onNavigateToProduct }: DashboardProps) {
     try {
       setError(null)
 
-      // Primeiro, buscar todos os produtos ativos com suas prateleiras
+      // Primeiro, buscar TODAS as prateleiras cadastradas
+      const { data: prateleirasData, error: prateleirasError } = await supabase
+        .from("prateleiras")
+        .select("id, numero, descricao, ativo")
+        .eq("ativo", true)
+        .order("numero")
+
+      if (prateleirasError) throw prateleirasError
+
+      if (!prateleirasData || prateleirasData.length === 0) {
+        setPrateleiras([])
+        setLoading(false)
+        return
+      }
+
+      // Buscar todos os produtos ativos para contar por prateleira
       const { data: produtosData, error: produtosError } = await supabase
         .from("produtos")
         .select("prateleira, estoque_loja, estoque_armazem, estoque_minimo")
         .eq("ativo", true)
-        .not("prateleira", "is", null)
-        .not("prateleira", "eq", "")
 
       if (produtosError) throw produtosError
 
-      // Agrupar produtos por prateleira
-      const prateleirasMap = new Map<string, PrateleiraDashboard>()
+      // Criar mapa de contagem de produtos por prateleira
+      const produtosPorPrateleira = new Map<string, { total: number; abaixoMinimo: number }>()
 
       produtosData?.forEach((produto) => {
-        const prateleira = produto.prateleira
-        if (!prateleira) return
+        if (!produto.prateleira) return
 
-        if (!prateleirasMap.has(prateleira)) {
-          prateleirasMap.set(prateleira, {
-            id: prateleira,
-            numero: prateleira,
-            descricao: `Prateleira ${prateleira}`,
-            totalProdutos: 0,
-            produtosAbaixoMinimo: 0,
-          })
+        if (!produtosPorPrateleira.has(produto.prateleira)) {
+          produtosPorPrateleira.set(produto.prateleira, { total: 0, abaixoMinimo: 0 })
         }
 
-        const prateleiraData = prateleirasMap.get(prateleira)!
-        prateleiraData.totalProdutos++
+        const contagem = produtosPorPrateleira.get(produto.prateleira)!
+        contagem.total++
 
+        // Verificar se está abaixo do estoque mínimo
         if (produto.estoque_loja + produto.estoque_armazem < produto.estoque_minimo) {
-          prateleiraData.produtosAbaixoMinimo++
+          contagem.abaixoMinimo++
         }
       })
 
-      // Buscar descrições das prateleiras cadastradas na tabela prateleiras
-      try {
-        const { data: prateleirasData } = await supabase
-          .from("prateleiras")
-          .select("numero, descricao")
-          .eq("ativo", true)
+      // Combinar dados das prateleiras com contagem de produtos
+      const prateleirasCompletas: PrateleiraDashboard[] = prateleirasData.map((prateleira) => {
+        const contagem = produtosPorPrateleira.get(prateleira.numero) || { total: 0, abaixoMinimo: 0 }
 
-        prateleirasData?.forEach((prateleira) => {
-          if (prateleirasMap.has(prateleira.numero)) {
-            prateleirasMap.get(prateleira.numero)!.descricao = prateleira.descricao || `Prateleira ${prateleira.numero}`
-          }
-        })
-      } catch (error) {
-        console.log("Tabela prateleiras não encontrada, usando dados dos produtos")
-      }
+        return {
+          id: prateleira.id,
+          numero: prateleira.numero,
+          descricao: prateleira.descricao || `Prateleira ${prateleira.numero}`,
+          totalProdutos: contagem.total,
+          produtosAbaixoMinimo: contagem.abaixoMinimo,
+          ativo: prateleira.ativo,
+        }
+      })
 
-      setPrateleiras(Array.from(prateleirasMap.values()).sort((a, b) => a.numero.localeCompare(b.numero)))
+      setPrateleiras(prateleirasCompletas)
     } catch (error) {
       console.error("Erro ao carregar prateleiras:", error)
       setError("Erro ao carregar dados das prateleiras. Tente novamente.")
@@ -114,7 +133,7 @@ export function Dashboard({ onNavigateToProduct }: DashboardProps) {
     try {
       const { data, error } = await supabase
         .from("produtos")
-        .select("id, codigo, nome, estoque_loja, estoque_armazem, estoque_minimo")
+        .select("*")
         .eq("ativo", true)
         .eq("prateleira", numeroprateleira)
         .order("nome")
@@ -123,6 +142,7 @@ export function Dashboard({ onNavigateToProduct }: DashboardProps) {
 
       setProdutosPrateleira(data || [])
       setPrateleiraAtual(numeroprateleira)
+      setCurrentPage(1) // Reset pagination when changing shelf
     } catch (error) {
       console.error("Erro ao carregar produtos da prateleira:", error)
       toast({
@@ -136,6 +156,8 @@ export function Dashboard({ onNavigateToProduct }: DashboardProps) {
   const voltarParaPrateleiras = () => {
     setPrateleiraAtual(null)
     setProdutosPrateleira([])
+    setSearchTerm("")
+    setCurrentPage(1)
   }
 
   const handleProductClick = (productId: string) => {
@@ -144,12 +166,67 @@ export function Dashboard({ onNavigateToProduct }: DashboardProps) {
     }
   }
 
+  const handleDeleteProduct = async (productId: string, productName: string) => {
+    if (!confirm(`Tem certeza que deseja excluir o produto "${productName}"?`)) {
+      return
+    }
+
+    try {
+      const { error } = await supabase.from("produtos").update({ ativo: false }).eq("id", productId)
+
+      if (error) throw error
+
+      toast({
+        title: "Produto excluído",
+        description: `O produto "${productName}" foi excluído com sucesso.`,
+      })
+
+      // Recarregar produtos da prateleira
+      if (prateleiraAtual) {
+        loadProdutosPrateleira(prateleiraAtual)
+      }
+    } catch (error) {
+      console.error("Erro ao excluir produto:", error)
+      toast({
+        title: "Erro",
+        description: "Não foi possível excluir o produto.",
+        variant: "destructive",
+      })
+    }
+  }
+
+  // Filter products based on search term
+  const filteredProdutos = produtosPrateleira.filter(
+    (produto) =>
+      produto.nome.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      produto.codigo.toLowerCase().includes(searchTerm.toLowerCase()),
+  )
+
+  // Pagination logic
+  const totalPages = Math.ceil(filteredProdutos.length / itemsPerPage)
+  const startIndex = (currentPage - 1) * itemsPerPage
+  const endIndex = startIndex + itemsPerPage
+  const currentProdutos = filteredProdutos.slice(startIndex, endIndex)
+
+  // Reset page when search changes
+  useEffect(() => {
+    setCurrentPage(1)
+  }, [searchTerm])
+
+  const formatCurrency = (value: number) => {
+    return `Kz ${value.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+  }
+
   if (loading) {
     return (
       <div className="p-6">
+        <div className="mb-6">
+          <div className="h-8 bg-gray-200 rounded w-48 mb-2 animate-pulse"></div>
+          <div className="h-4 bg-gray-200 rounded w-64 animate-pulse"></div>
+        </div>
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 gap-4">
           {[...Array(12)].map((_, i) => (
-            <div key={i} className="h-24 bg-gray-200 rounded animate-pulse"></div>
+            <div key={i} className="h-32 bg-gray-200 rounded animate-pulse"></div>
           ))}
         </div>
       </div>
@@ -180,58 +257,273 @@ export function Dashboard({ onNavigateToProduct }: DashboardProps) {
       <div className="p-3 md:p-6">
         <div className="mb-6">
           <Button variant="outline" onClick={voltarParaPrateleiras} className="mb-4">
-            ← Voltar às Prateleiras
+            <ArrowLeft className="h-4 w-4 mr-2" />
+            Voltar às Prateleiras
           </Button>
-          <h1 className="text-xl md:text-2xl font-bold text-gray-900">{prateleiraInfo?.descricao}</h1>
-          <p className="text-sm md:text-base text-gray-600">{produtosPrateleira.length} produtos</p>
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-          {produtosPrateleira.length > 0 ? (
-            produtosPrateleira.map((produto) => (
-              <Card
-                key={produto.id}
-                className="hover:shadow-md transition-shadow cursor-pointer"
-                onClick={() => handleProductClick(produto.id)}
-              >
-                <CardContent className="p-4">
-                  <div className="flex justify-between items-start mb-3">
-                    <div className="flex-1 min-w-0">
-                      <h3 className="font-medium text-sm truncate">{produto.nome}</h3>
-                      <p className="text-xs text-gray-600">Cód: {produto.codigo}</p>
-                    </div>
-                    {produto.estoque_loja + produto.estoque_armazem < produto.estoque_minimo && (
-                      <Badge variant="destructive" className="text-xs ml-2">
-                        Baixo
-                      </Badge>
-                    )}
-                  </div>
-
-                  <div className="space-y-2 text-sm">
-                    <div className="flex justify-between">
-                      <span className="text-gray-600">Loja:</span>
-                      <span className="font-medium text-blue-600">{produto.estoque_loja} un</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-gray-600">Armazém:</span>
-                      <span className="font-medium text-green-600">{produto.estoque_armazem} un</span>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-            ))
-          ) : (
-            <div className="col-span-full">
-              <Card>
-                <CardContent className="text-center py-8">
-                  <Package className="mx-auto h-12 w-12 text-gray-400" />
-                  <h3 className="mt-2 text-sm font-medium text-gray-900">Nenhum produto encontrado</h3>
-                  <p className="mt-1 text-sm text-gray-500">Esta prateleira não possui produtos cadastrados.</p>
-                </CardContent>
-              </Card>
+          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+            <div>
+              <h1 className="text-xl md:text-2xl font-bold text-gray-900">
+                {prateleiraInfo?.numero} - <span className="font-bold">{prateleiraInfo?.descricao}</span>
+              </h1>
+              <p className="text-sm md:text-base text-gray-600">
+                {filteredProdutos.length} {filteredProdutos.length === 1 ? "produto" : "produtos"}
+                {searchTerm && ` (filtrado de ${produtosPrateleira.length})`}
+              </p>
             </div>
-          )}
+            <Button onClick={onNavigateToCreate} className="w-full sm:w-auto">
+              <Package className="mr-2 h-4 w-4" />
+              Novo Produto
+            </Button>
+          </div>
         </div>
+
+        {/* Barra de Pesquisa */}
+        <div className="mb-6">
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 h-4 w-4" />
+            <Input
+              placeholder="Pesquisar por nome ou código..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="pl-10"
+            />
+          </div>
+        </div>
+
+        {/* Tabela Responsiva de Produtos - IGUAL À PÁGINA DE PRODUTOS */}
+        <Card className="shadow-sm">
+          <CardContent className="p-0">
+            {filteredProdutos.length > 0 ? (
+              <>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead className="bg-gray-100 border-b border-gray-200">
+                      <tr>
+                        <th className="text-left py-3 px-4 font-semibold text-gray-700">Produto</th>
+                        <th className="text-center py-3 px-3 font-semibold text-gray-700 hidden sm:table-cell">Loja</th>
+                        <th className="text-center py-3 px-3 font-semibold text-gray-700 hidden sm:table-cell">
+                          Armazém
+                        </th>
+                        <th className="text-center py-3 px-3 font-semibold text-gray-700">Total</th>
+                        <th className="text-right py-3 px-4 font-semibold text-gray-700 hidden md:table-cell">Preço</th>
+                        <th className="text-center py-3 px-3 font-semibold text-gray-700">Ações</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {currentProdutos.map((produto, index) => (
+                        <tr
+                          key={produto.id}
+                          className={`border-b border-gray-100 hover:bg-blue-50 transition-colors ${
+                            index % 2 === 0 ? "bg-white" : "bg-gray-50"
+                          }`}
+                        >
+                          <td className="py-2 px-4">
+                            <div className="flex items-center gap-2">
+                              <div className="flex-1 min-w-0">
+                                <div className="font-medium text-gray-900 text-sm">
+                                  <span className="sm:hidden">
+                                    {produto.nome.length > 15 ? `${produto.nome.substring(0, 15)}...` : produto.nome}
+                                  </span>
+                                  <span className="hidden sm:inline">{produto.nome}</span>
+                                </div>
+                                <div className="text-xs text-gray-500 flex items-center gap-2">
+                                  <span className="font-mono bg-gray-100 px-1 rounded">{produto.codigo}</span>
+                                  {/* Mostrar estoque mobile apenas em telas pequenas */}
+                                  <span className="sm:hidden text-blue-600 font-medium">
+                                    L:{produto.estoque_loja} A:{produto.estoque_armazem}
+                                  </span>
+                                </div>
+                              </div>
+                              {produto.estoque_loja + produto.estoque_armazem < produto.estoque_minimo && (
+                                <Badge variant="destructive" className="text-xs px-1 py-0 h-5">
+                                  Baixo
+                                </Badge>
+                              )}
+                            </div>
+                          </td>
+
+                          {/* Colunas ocultas no mobile */}
+                          <td className="py-2 px-3 text-center hidden sm:table-cell">
+                            <span className="inline-flex items-center justify-center w-8 h-6 bg-blue-100 text-blue-700 rounded text-xs font-medium">
+                              {produto.estoque_loja}
+                            </span>
+                          </td>
+                          <td className="py-2 px-3 text-center hidden sm:table-cell">
+                            <span className="inline-flex items-center justify-center w-8 h-6 bg-green-100 text-green-700 rounded text-xs font-medium">
+                              {produto.estoque_armazem}
+                            </span>
+                          </td>
+
+                          <td className="py-2 px-3 text-center">
+                            <span className="inline-flex items-center justify-center w-8 h-6 bg-gray-100 text-gray-800 rounded text-xs font-bold">
+                              {produto.estoque_loja + produto.estoque_armazem}
+                            </span>
+                          </td>
+
+                          {/* Preço oculto no mobile */}
+                          <td className="py-2 px-4 text-right hidden md:table-cell">
+                            <span className="text-sm font-medium text-gray-900">
+                              {formatCurrency(produto.preco_venda)}
+                            </span>
+                          </td>
+
+                          <td className="py-2 px-3">
+                            <div className="flex justify-center gap-1">
+                              {/* Mobile: apenas editar e excluir */}
+                              <div className="sm:hidden flex gap-1">
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => onNavigateToEdit?.(produto.id)}
+                                  className="h-7 w-7 p-0 hover:bg-green-100"
+                                >
+                                  <Edit className="h-3 w-3" />
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => handleDeleteProduct(produto.id, produto.nome)}
+                                  className="h-7 w-7 p-0 hover:bg-red-100 text-red-600"
+                                >
+                                  <Trash2 className="h-3 w-3" />
+                                </Button>
+                              </div>
+
+                              {/* Desktop: todos os botões */}
+                              <div className="hidden sm:flex gap-1">
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => onNavigateToView?.(produto.id)}
+                                  className="h-7 w-7 p-0 hover:bg-blue-100"
+                                >
+                                  <Eye className="h-3 w-3" />
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => onNavigateToEdit?.(produto.id)}
+                                  className="h-7 w-7 p-0 hover:bg-green-100"
+                                >
+                                  <Edit className="h-3 w-3" />
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => handleDeleteProduct(produto.id, produto.nome)}
+                                  className="h-7 w-7 p-0 hover:bg-red-100 text-red-600"
+                                >
+                                  <Trash2 className="h-3 w-3" />
+                                </Button>
+                              </div>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+
+                {/* Paginação Responsiva */}
+                {totalPages > 1 && (
+                  <div className="flex flex-col items-center justify-center px-4 py-3 bg-gray-50 border-t border-gray-200 gap-3">
+                    {/* Informação de páginas - sempre visível */}
+                    <div className="text-sm text-gray-700 text-center">
+                      <span className="hidden sm:inline">
+                        Mostrando {startIndex + 1} a {Math.min(endIndex, filteredProdutos.length)} de{" "}
+                        {filteredProdutos.length} produtos
+                      </span>
+                      <span className="sm:hidden">
+                        {startIndex + 1}-{Math.min(endIndex, filteredProdutos.length)} de {filteredProdutos.length}
+                      </span>
+                    </div>
+
+                    {/* Controles de paginação - sempre visível */}
+                    <div className="flex items-center justify-center gap-2 w-full">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setCurrentPage((prev) => Math.max(prev - 1, 1))}
+                        disabled={currentPage === 1}
+                        className="h-8 px-3"
+                      >
+                        <span className="hidden sm:inline">Anterior</span>
+                        <span className="sm:hidden">‹</span>
+                      </Button>
+
+                      {/* Indicador de página atual - sempre visível */}
+                      <div className="flex items-center gap-1">
+                        {/* Mobile: mostrar apenas página atual */}
+                        <div className="sm:hidden">
+                          <span className="px-3 py-1 text-sm font-medium bg-white border rounded">
+                            {currentPage} / {totalPages}
+                          </span>
+                        </div>
+
+                        {/* Desktop: mostrar números das páginas */}
+                        <div className="hidden sm:flex items-center gap-1">
+                          {Array.from({ length: totalPages }, (_, i) => i + 1)
+                            .filter((page) => {
+                              return (
+                                page === 1 ||
+                                page === totalPages ||
+                                (page >= currentPage - 1 && page <= currentPage + 1)
+                              )
+                            })
+                            .map((page, index, array) => {
+                              const prevPage = array[index - 1]
+                              const showEllipsis = prevPage && page - prevPage > 1
+
+                              return (
+                                <div key={page} className="flex items-center">
+                                  {showEllipsis && <span className="px-2 text-gray-400">...</span>}
+                                  <Button
+                                    variant={currentPage === page ? "default" : "outline"}
+                                    size="sm"
+                                    onClick={() => setCurrentPage(page)}
+                                    className="h-8 w-8 p-0"
+                                  >
+                                    {page}
+                                  </Button>
+                                </div>
+                              )
+                            })}
+                        </div>
+                      </div>
+
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setCurrentPage((prev) => Math.min(prev + 1, totalPages))}
+                        disabled={currentPage === totalPages}
+                        className="h-8 px-3"
+                      >
+                        <span className="hidden sm:inline">Próxima</span>
+                        <span className="sm:hidden">›</span>
+                      </Button>
+                    </div>
+                  </div>
+                )}
+              </>
+            ) : (
+              <div className="text-center py-12">
+                <Package className="mx-auto h-16 w-16 text-gray-400 mb-4" />
+                <h3 className="text-lg font-medium text-gray-900 mb-2">
+                  {searchTerm ? "Nenhum produto encontrado" : "Prateleira Vazia"}
+                </h3>
+                <p className="text-sm text-gray-500 mb-4">
+                  {searchTerm
+                    ? "Tente ajustar os termos da pesquisa."
+                    : "Esta prateleira não possui produtos cadastrados ainda."}
+                </p>
+                <Button variant="outline" onClick={onNavigateToCreate} className="mt-2">
+                  <Package className="mr-2 h-4 w-4" />
+                  Adicionar Produto
+                </Button>
+              </div>
+            )}
+          </CardContent>
+        </Card>
       </div>
     )
   }
@@ -239,27 +531,78 @@ export function Dashboard({ onNavigateToProduct }: DashboardProps) {
   return (
     <div className="p-3 md:p-6">
       <div className="mb-6">
-        <h1 className="text-xl md:text-2xl font-bold text-gray-900">Dashboard</h1>
-        <p className="text-sm md:text-base text-gray-600">Controle de estoque por prateleiras</p>
+        <h1 className="text-xl md:text-2xl font-bold text-gray-900">Dashboard de Estoque</h1>
+        <p className="text-sm md:text-base text-gray-600">
+          Controle de estoque por prateleiras • {prateleiras.length} prateleiras cadastradas
+        </p>
       </div>
 
-      {/* Grid de Prateleiras como Botões */}
+      {/* Estatísticas rápidas */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+        <Card>
+          <CardContent className="p-4 text-center">
+            <div className="text-2xl font-bold text-blue-600">{prateleiras.length}</div>
+            <div className="text-xs text-gray-600">Prateleiras</div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="p-4 text-center">
+            <div className="text-2xl font-bold text-green-600">
+              {prateleiras.reduce((acc, p) => acc + p.totalProdutos, 0)}
+            </div>
+            <div className="text-xs text-gray-600">Produtos</div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="p-4 text-center">
+            <div className="text-2xl font-bold text-amber-600">
+              {prateleiras.filter((p) => p.totalProdutos === 0).length}
+            </div>
+            <div className="text-xs text-gray-600">Vazias</div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="p-4 text-center">
+            <div className="text-2xl font-bold text-red-600">
+              {prateleiras.reduce((acc, p) => acc + p.produtosAbaixoMinimo, 0)}
+            </div>
+            <div className="text-xs text-gray-600">Estoque Baixo</div>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Grid de Prateleiras */}
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 gap-4">
         {prateleiras.map((prateleira) => (
           <Button
             key={prateleira.id}
             variant="outline"
-            className="h-auto p-4 flex flex-col items-center justify-center space-y-2 hover:bg-blue-50 hover:border-blue-300"
+            className={`h-auto p-4 flex flex-col items-center justify-center space-y-2 transition-all duration-200 ${
+              prateleira.totalProdutos === 0
+                ? "hover:bg-amber-50 hover:border-amber-300 border-dashed"
+                : "hover:bg-blue-50 hover:border-blue-300"
+            }`}
             onClick={() => loadProdutosPrateleira(prateleira.numero)}
           >
-            <div className="text-lg font-bold text-gray-900">{prateleira.numero}</div>
-            <div className="text-xs text-gray-600 text-center line-clamp-2">{prateleira.descricao}</div>
-            <div className="flex flex-col items-center gap-1">
-              <Badge variant="secondary" className="text-xs">
-                {prateleira.totalProdutos} itens
+            <div className="flex items-center gap-2">
+              <Shelf className="h-4 w-4 text-gray-500" />
+              <div className="text-lg font-bold text-gray-900">{prateleira.numero}</div>
+            </div>
+
+            <div className="text-xs text-gray-700 text-center line-clamp-2 font-bold min-h-[2rem] flex items-center">
+              {prateleira.descricao}
+            </div>
+
+            <div className="flex flex-col items-center gap-1 w-full">
+              <Badge
+                variant={prateleira.totalProdutos === 0 ? "outline" : "secondary"}
+                className="text-xs w-full justify-center"
+              >
+                {prateleira.totalProdutos === 0 ? "Vazia" : `${prateleira.totalProdutos} itens`}
               </Badge>
+
               {prateleira.produtosAbaixoMinimo > 0 && (
-                <Badge variant="destructive" className="text-xs">
+                <Badge variant="destructive" className="text-xs w-full justify-center">
                   {prateleira.produtosAbaixoMinimo} baixo
                 </Badge>
               )}
@@ -269,13 +612,16 @@ export function Dashboard({ onNavigateToProduct }: DashboardProps) {
       </div>
 
       {prateleiras.length === 0 && (
-        <Card>
-          <CardContent className="text-center py-8">
-            <Package className="mx-auto h-12 w-12 text-gray-400" />
-            <h3 className="mt-2 text-sm font-medium text-gray-900">Nenhuma prateleira encontrada</h3>
-            <p className="mt-1 text-sm text-gray-500">
-              Cadastre produtos com prateleiras para começar a usar o sistema.
+        <Card className="border-dashed border-2 border-gray-300">
+          <CardContent className="text-center py-12">
+            <Shelf className="mx-auto h-16 w-16 text-gray-400 mb-4" />
+            <h3 className="text-lg font-medium text-gray-900 mb-2">Nenhuma prateleira cadastrada</h3>
+            <p className="text-sm text-gray-500 mb-4">
+              Cadastre prateleiras para organizar seus produtos e facilitar o controle de estoque.
             </p>
+            <Button variant="outline" className="text-blue-600 border-blue-300">
+              Cadastrar Primeira Prateleira
+            </Button>
           </CardContent>
         </Card>
       )}

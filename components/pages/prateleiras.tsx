@@ -7,7 +7,7 @@ import { supabase, type Prateleira } from "@/lib/supabase"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Card, CardContent } from "@/components/ui/card"
-import { Plus, Search, Edit, Trash2, Grid3X3, AlertCircle } from "lucide-react"
+import { Plus, Search, Edit, Trash2, Grid3X3, AlertCircle, AlertTriangle } from "lucide-react"
 import {
   Dialog,
   DialogContent,
@@ -47,6 +47,7 @@ export function Prateleiras() {
   const [dialogOpen, setDialogOpen] = useState(false)
   const [editMode, setEditMode] = useState(false)
   const [currentId, setCurrentId] = useState<string | null>(null)
+  const [deleteLoading, setDeleteLoading] = useState<string | null>(null)
 
   const isSupervisor = user?.tipo === "supervisor"
 
@@ -108,6 +109,28 @@ export function Prateleiras() {
     setCurrentId(null)
   }
 
+  const checkDuplicateNumero = async (numero: string, excludeId?: string): Promise<boolean> => {
+    try {
+      let query = supabase.from("prateleiras").select("id").eq("numero", numero.trim())
+
+      if (excludeId) {
+        query = query.neq("id", excludeId)
+      }
+
+      const { data, error } = await query.limit(1)
+
+      if (error) {
+        console.error("Erro ao verificar duplicata:", error)
+        return false
+      }
+
+      return data && data.length > 0
+    } catch (error) {
+      console.error("Erro na verificação de duplicata:", error)
+      return false
+    }
+  }
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
 
@@ -120,20 +143,59 @@ export function Prateleiras() {
       return
     }
 
-    try {
-      if (editMode && currentId) {
-        const { error } = await supabase.from("prateleiras").update(novaPrateleira).eq("id", currentId)
+    if (!novaPrateleira.numero?.trim()) {
+      toast({
+        title: "Erro de validação",
+        description: "O número da prateleira é obrigatório.",
+        variant: "destructive",
+      })
+      return
+    }
 
-        if (error) throw error
+    try {
+      // Verificar duplicatas
+      const isDuplicate = await checkDuplicateNumero(novaPrateleira.numero, currentId || undefined)
+      if (isDuplicate) {
+        toast({
+          title: "Número duplicado",
+          description: `Já existe uma prateleira com o número "${novaPrateleira.numero}". Escolha um número diferente.`,
+          variant: "destructive",
+        })
+        return
+      }
+
+      if (editMode && currentId) {
+        const { error } = await supabase
+          .from("prateleiras")
+          .update({
+            numero: novaPrateleira.numero.trim(),
+            descricao: novaPrateleira.descricao?.trim() || null,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", currentId)
+
+        if (error) {
+          console.error("Erro ao atualizar:", error)
+          throw error
+        }
 
         toast({
           title: "Prateleira atualizada",
           description: "A prateleira foi atualizada com sucesso.",
         })
       } else {
-        const { error } = await supabase.from("prateleiras").insert([novaPrateleira])
+        const { error } = await supabase.from("prateleiras").insert([
+          {
+            numero: novaPrateleira.numero.trim(),
+            descricao: novaPrateleira.descricao?.trim() || null,
+            ativo: true,
+          },
+        ])
 
-        if (error) throw error
+        if (error) {
+          console.error("Erro ao criar:", error)
+          throw error
+        }
 
         toast({
           title: "Prateleira cadastrada",
@@ -144,13 +206,23 @@ export function Prateleiras() {
       loadPrateleiras()
       setDialogOpen(false)
       resetForm()
-    } catch (error) {
+    } catch (error: any) {
       console.error("Erro ao salvar prateleira:", error)
-      toast({
-        title: "Erro",
-        description: "Ocorreu um erro ao salvar a prateleira.",
-        variant: "destructive",
-      })
+
+      // Tratar erro específico de duplicata
+      if (error.code === "23505") {
+        toast({
+          title: "Número duplicado",
+          description: `Já existe uma prateleira com o número "${novaPrateleira.numero}". Escolha um número diferente.`,
+          variant: "destructive",
+        })
+      } else {
+        toast({
+          title: "Erro",
+          description: "Ocorreu um erro ao salvar a prateleira.",
+          variant: "destructive",
+        })
+      }
     }
   }
 
@@ -173,6 +245,26 @@ export function Prateleiras() {
     setDialogOpen(true)
   }
 
+  const checkPrateleiraHasProdutos = async (prateleiraNumero: string): Promise<number> => {
+    try {
+      const { data, error } = await supabase
+        .from("produtos")
+        .select("id")
+        .eq("prateleira", prateleiraNumero)
+        .eq("ativo", true)
+
+      if (error) {
+        console.error("Erro ao verificar produtos:", error)
+        return 0
+      }
+
+      return data?.length || 0
+    } catch (error) {
+      console.error("Erro ao verificar produtos:", error)
+      return 0
+    }
+  }
+
   const handleDelete = async (id: string, numero: string) => {
     if (!isSupervisor) {
       toast({
@@ -184,13 +276,31 @@ export function Prateleiras() {
     }
 
     try {
-      const { error } = await supabase.from("prateleiras").update({ ativo: false }).eq("id", id)
+      setDeleteLoading(id)
 
-      if (error) throw error
+      // Verificar se há produtos associados à prateleira
+      const produtosCount = await checkPrateleiraHasProdutos(numero)
+
+      if (produtosCount > 0) {
+        toast({
+          title: "Não é possível excluir",
+          description: `Esta prateleira possui ${produtosCount} produto(s) associado(s). Remova ou mova os produtos primeiro.`,
+          variant: "destructive",
+        })
+        return
+      }
+
+      // Excluir permanentemente da base de dados
+      const { error } = await supabase.from("prateleiras").delete().eq("id", id)
+
+      if (error) {
+        console.error("Erro ao excluir prateleira:", error)
+        throw error
+      }
 
       toast({
         title: "Prateleira excluída",
-        description: `A prateleira "${numero}" foi excluída com sucesso.`,
+        description: `A prateleira "${numero}" foi excluída permanentemente.`,
       })
 
       loadPrateleiras()
@@ -201,6 +311,8 @@ export function Prateleiras() {
         description: "Ocorreu um erro ao excluir a prateleira.",
         variant: "destructive",
       })
+    } finally {
+      setDeleteLoading(null)
     }
   }
 
@@ -279,8 +391,9 @@ export function Prateleiras() {
                       value={novaPrateleira.numero || ""}
                       onChange={handleInputChange}
                       required
-                      placeholder="Ex: Prat 01"
+                      placeholder="Ex: A01, B02, Prat-01"
                     />
+                    <p className="text-xs text-gray-500">Identificação única da prateleira</p>
                   </div>
                   <div className="space-y-2">
                     <Label htmlFor="descricao">Descrição</Label>
@@ -290,8 +403,9 @@ export function Prateleiras() {
                       value={novaPrateleira.descricao || ""}
                       onChange={handleInputChange}
                       rows={3}
-                      placeholder="Descrição da prateleira..."
+                      placeholder="Descrição da localização ou características da prateleira..."
                     />
+                    <p className="text-xs text-gray-500">Informações adicionais (opcional)</p>
                   </div>
                 </div>
                 <DialogFooter className="gap-2">
@@ -340,16 +454,36 @@ export function Prateleiras() {
                     </Button>
                     <AlertDialog>
                       <AlertDialogTrigger asChild>
-                        <Button variant="outline" size="sm" className="text-red-600 hover:text-red-700">
-                          <Trash2 className="w-3 h-3" />
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="text-red-600 hover:text-red-700"
+                          disabled={deleteLoading === prateleira.id}
+                        >
+                          {deleteLoading === prateleira.id ? (
+                            <div className="w-3 h-3 border-2 border-red-600 border-t-transparent rounded-full animate-spin" />
+                          ) : (
+                            <Trash2 className="w-3 h-3" />
+                          )}
                         </Button>
                       </AlertDialogTrigger>
                       <AlertDialogContent className="w-[95vw] max-w-md">
                         <AlertDialogHeader>
-                          <AlertDialogTitle>Confirmar exclusão</AlertDialogTitle>
-                          <AlertDialogDescription>
-                            Tem certeza que deseja excluir a prateleira "{prateleira.numero}"? Esta ação não pode ser
-                            desfeita.
+                          <AlertDialogTitle className="flex items-center gap-2">
+                            <AlertTriangle className="h-5 w-5 text-red-600" />
+                            Confirmar exclusão permanente
+                          </AlertDialogTitle>
+                          <AlertDialogDescription className="space-y-2">
+                            <p>
+                              Tem certeza que deseja excluir <strong>permanentemente</strong> a prateleira "
+                              {prateleira.numero}"?
+                            </p>
+                            <div className="p-3 bg-red-50 border border-red-200 rounded-md">
+                              <p className="text-sm text-red-800 font-medium">⚠️ Esta ação não pode ser desfeita!</p>
+                              <p className="text-xs text-red-700 mt-1">
+                                A prateleira será removida completamente do sistema.
+                              </p>
+                            </div>
                           </AlertDialogDescription>
                         </AlertDialogHeader>
                         <AlertDialogFooter className="gap-2">
@@ -357,8 +491,9 @@ export function Prateleiras() {
                           <AlertDialogAction
                             onClick={() => handleDelete(prateleira.id, prateleira.numero)}
                             className="w-full sm:w-auto bg-red-600 hover:bg-red-700"
+                            disabled={deleteLoading === prateleira.id}
                           >
-                            Excluir
+                            {deleteLoading === prateleira.id ? "Excluindo..." : "Excluir Permanentemente"}
                           </AlertDialogAction>
                         </AlertDialogFooter>
                       </AlertDialogContent>
@@ -375,7 +510,11 @@ export function Prateleiras() {
                 <Grid3X3 className="mx-auto h-12 w-12 text-gray-400" />
                 <h3 className="mt-2 text-sm font-medium text-gray-900">Nenhuma prateleira encontrada</h3>
                 <p className="mt-1 text-sm text-gray-500">
-                  {isSupervisor ? "Adicione uma nova prateleira para começar." : "Nenhuma prateleira cadastrada."}
+                  {searchTerm
+                    ? "Tente ajustar os termos da pesquisa."
+                    : isSupervisor
+                      ? "Adicione uma nova prateleira para começar."
+                      : "Nenhuma prateleira cadastrada."}
                 </p>
               </CardContent>
             </Card>
