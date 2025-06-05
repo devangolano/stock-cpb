@@ -7,7 +7,7 @@ import { supabase, type Produto, type Categoria, type Prateleira } from "@/lib/s
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { ArrowLeft, Save, AlertCircle } from "lucide-react"
+import { ArrowLeft, Save, AlertCircle } from 'lucide-react'
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { useToast } from "@/hooks/use-toast"
@@ -140,10 +140,6 @@ export function ProdutoForm({ produtoId, onBack, onSave }: ProdutoFormProps) {
 
     if (!produto.categoria_id) {
       return "A categoria é obrigatória"
-    }
-
-    if (!produto.preco_venda || produto.preco_venda <= 0) {
-      return "O preço de venda deve ser maior que zero"
     }
 
     // Validar formato do código (3 letras + 2 números)
@@ -332,21 +328,19 @@ export function ProdutoForm({ produtoId, onBack, onSave }: ProdutoFormProps) {
               <p className="text-xs text-gray-500">Valor pago ao fornecedor (opcional)</p>
             </div>
             <div className="space-y-2">
-              <Label htmlFor="preco_venda">Preço de Venda (Kz)*</Label>
+              <Label htmlFor="preco_venda">Preço de Venda (Kz)</Label>
               <Input
                 id="preco_venda"
                 name="preco_venda"
                 type="number"
                 step="0.01"
-                min="0.01"
+                min="0"
                 value={produto.preco_venda || ""}
                 onChange={handleInputChange}
-                required
                 placeholder="0.00"
                 disabled={loading}
-                className={error && (!produto.preco_venda || produto.preco_venda <= 0) ? "border-red-500" : ""}
               />
-              <p className="text-xs text-gray-500">Valor de venda ao cliente</p>
+              <p className="text-xs text-gray-500">Valor de venda ao cliente (opcional)</p>
             </div>
           </CardContent>
         </Card>

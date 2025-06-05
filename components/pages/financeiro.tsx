@@ -1,5 +1,7 @@
 "use client"
 
+import type React from "react"
+
 import { useEffect, useState } from "react"
 import { supabase } from "@/lib/supabase"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -10,8 +12,6 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Calendar, Download, DollarSign, Package, ChevronLeft, ChevronRight, Filter } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { useToast } from "@/hooks/use-toast"
-import { jsPDF } from "jspdf"
-import "jspdf-autotable"
 
 interface MovimentacaoFinanceira {
   id: string
@@ -29,6 +29,22 @@ interface ResumoFinanceiro {
   totalQuantidade: number
 }
 
+interface MovimentacaoData {
+  id: string
+  produto_id: string
+  quantidade: number
+  tipo: string
+  created_at: string
+  produtos: {
+    nome: string
+    codigo: string
+    preco_venda: number
+  } | null
+  funcionarios: {
+    nome: string
+  } | null
+}
+
 export function Financeiro() {
   const { toast } = useToast()
   const [movimentacoes, setMovimentacoes] = useState<MovimentacaoFinanceira[]>([])
@@ -41,6 +57,7 @@ export function Financeiro() {
   const [dataFim, setDataFim] = useState("")
   const [periodo, setPeriodo] = useState("hoje")
   const [showFilters, setShowFilters] = useState(false)
+  const [exportingPDF, setExportingPDF] = useState(false)
 
   // Paginação
   const [currentPage, setCurrentPage] = useState(1)
@@ -104,7 +121,6 @@ export function Financeiro() {
         break
     }
 
-    // Reset para a primeira página quando mudar o período
     setCurrentPage(1)
   }
 
@@ -125,6 +141,14 @@ export function Financeiro() {
       const total = count || 0
       setTotalPages(Math.ceil(total / itemsPerPage))
 
+      // Se não há registros, definir dados vazios
+      if (total === 0) {
+        setMovimentacoes([])
+        setResumo({ totalVendas: 0, totalQuantidade: 0 })
+        setLoading(false)
+        return
+      }
+
       // Calcular o intervalo para paginação
       const from = (currentPage - 1) * itemsPerPage
       const to = from + itemsPerPage - 1
@@ -136,11 +160,15 @@ export function Financeiro() {
           id,
           produto_id,
           quantidade,
+          tipo,
           created_at,
           produtos (
             nome,
             codigo,
             preco_venda
+          ),
+          funcionarios (
+            nome
           )
         `)
         .eq("tipo", "saida")
@@ -154,7 +182,7 @@ export function Financeiro() {
       // Processar dados financeiros
       const movimentacoesProcessadas: MovimentacaoFinanceira[] = []
 
-      movimentacoesData?.forEach((mov) => {
+      movimentacoesData?.forEach((mov: MovimentacaoData) => {
         const valorUnitario = mov.produtos?.preco_venda || 0
         const valorTotal = valorUnitario * mov.quantidade
 
@@ -189,7 +217,7 @@ export function Financeiro() {
       let totalVendas = 0
       let totalQuantidade = 0
 
-      allMovimentacoesData?.forEach((mov) => {
+      allMovimentacoesData?.forEach((mov: any) => {
         const valorUnitario = mov.produtos?.preco_venda || 0
         const valorTotal = valorUnitario * mov.quantidade
 
@@ -202,7 +230,6 @@ export function Financeiro() {
         totalQuantidade,
       })
     } catch (error) {
-      console.error("Erro ao carregar movimentações financeiras:", error)
       toast({
         title: "Erro",
         description: "Não foi possível carregar os dados financeiros.",
@@ -227,8 +254,47 @@ export function Financeiro() {
     })
   }
 
-  const exportarRelatorio = () => {
+  const exportarRelatorio = async () => {
     try {
+      setExportingPDF(true)
+
+      // Importar apenas jsPDF
+      const jsPDFModule = await import("jspdf")
+      const { jsPDF } = jsPDFModule
+
+      // Buscar todos os dados para o relatório
+      const { data: allData, error } = await supabase
+        .from("movimentacoes")
+        .select(`
+    id,
+    produto_id,
+    quantidade,
+    tipo,
+    created_at,
+    produtos (
+      nome,
+      preco_venda
+    ),
+    funcionarios (
+      nome
+    )
+  `)
+        .eq("tipo", "saida")
+        .gte("created_at", `${dataInicio}T00:00:00`)
+        .lte("created_at", `${dataFim}T23:59:59`)
+        .order("created_at", { ascending: false })
+
+      if (error) throw error
+
+      if (!allData || allData.length === 0) {
+        toast({
+          title: "Nenhum dado encontrado",
+          description: "Não há vendas no período selecionado para gerar o relatório.",
+          variant: "destructive",
+        })
+        return
+      }
+
       // Criar novo documento PDF
       const doc = new jsPDF()
 
@@ -236,108 +302,152 @@ export function Financeiro() {
       doc.setFont("helvetica", "bold")
       doc.setFontSize(16)
 
-      // Título
-      doc.text("RELATÓRIO FINANCEIRO - CPB STOCK", 14, 20)
+      // Título com margem reduzida
+      doc.text("RELATÓRIO FINANCEIRO - CPB STOCK", 10, 15)
 
-      // Informações do período
-      doc.setFontSize(11)
+      // Informações do período com espaçamento menor
+      doc.setFontSize(10)
       doc.setFont("helvetica", "normal")
-      doc.text(`Período: ${dataInicio} a ${dataFim}`, 14, 30)
+      doc.text(`Período: ${dataInicio} a ${dataFim}`, 10, 23)
       doc.text(
         `Data de Geração: ${new Date().toLocaleDateString("pt-BR")}, ${new Date().toLocaleTimeString("pt-BR")}`,
-        14,
-        35,
+        10,
+        28,
       )
 
       // Resumo financeiro
       doc.setFont("helvetica", "bold")
-      doc.text("RESUMO FINANCEIRO:", 14, 45)
+      doc.setFontSize(11)
+      doc.text("RESUMO FINANCEIRO:", 10, 36)
       doc.setFont("helvetica", "normal")
-      doc.text(`Total de Vendas: ${formatCurrency(resumo.totalVendas)}`, 14, 50)
-      doc.text(`Quantidade Total Vendida: ${resumo.totalQuantidade} unidades`, 14, 55)
+      doc.setFontSize(9)
+      doc.text(`Total de Vendas: ${formatCurrency(resumo.totalVendas)}`, 10, 42)
+      doc.text(`Quantidade Total Vendida: ${resumo.totalQuantidade} unidades`, 10, 47)
+      doc.text(`Total de Transações: ${allData.length}`, 10, 52)
 
       // Detalhamento das vendas
       doc.setFont("helvetica", "bold")
-      doc.text("DETALHAMENTO DAS VENDAS:", 14, 65)
+      doc.setFontSize(11)
+      doc.text("DETALHAMENTO DAS VENDAS:", 10, 60)
 
-      // Criar tabela com autoTable
-      const tableColumn = ["Data/Hora", "Código", "Produto", "Qtd", "Valor Unit.", "Valor Total"]
+      // Cabeçalho da tabela
+      let yPosition = 68
+      doc.setFont("helvetica", "bold")
+      doc.setFontSize(9)
 
-      // Buscar todos os dados para o relatório (sem paginação)
-      supabase
-        .from("movimentacoes")
-        .select(`
-          id,
-          produto_id,
-          quantidade,
-          created_at,
-          produtos (
-            nome,
-            codigo,
-            preco_venda
-          )
-        `)
-        .eq("tipo", "saida")
-        .gte("created_at", `${dataInicio}T00:00:00`)
-        .lte("created_at", `${dataFim}T23:59:59`)
-        .order("created_at", { ascending: false })
-        .then(({ data }) => {
-          if (!data) return
+      // Desenhar linha do cabeçalho
+      doc.line(10, yPosition + 2, 200, yPosition + 2)
 
-          const tableRows = data.map((mov) => {
-            const valorUnitario = mov.produtos?.preco_venda || 0
-            const valorTotal = valorUnitario * mov.quantidade
+      // Cabeçalhos das colunas (com "Tipo" adicionado)
+      doc.text("Data/Hora", 12, yPosition)
+      doc.text("Produto", 40, yPosition)
+      doc.text("Tipo", 85, yPosition)
+      doc.text("Responsável", 105, yPosition)
+      doc.text("Qtd", 145, yPosition)
+      doc.text("Valor Unit.", 160, yPosition)
+      doc.text("Valor Total", 180, yPosition)
 
-            return [
-              formatDate(mov.created_at),
-              mov.produtos?.codigo || "N/A",
-              mov.produtos?.nome || "Produto não encontrado",
-              mov.quantidade.toString(),
-              formatCurrency(valorUnitario),
-              formatCurrency(valorTotal),
-            ]
-          })
+      yPosition += 4
+      doc.line(10, yPosition, 200, yPosition)
+      yPosition += 3
 
-          // @ts-ignore - jsPDF-AutoTable não está tipado corretamente
-          doc.autoTable({
-            head: [tableColumn],
-            body: tableRows,
-            startY: 70,
-            theme: "striped",
-            headStyles: { fillColor: [66, 139, 202] },
-            margin: { top: 70 },
-          })
+      // Dados da tabela
+      doc.setFont("helvetica", "normal")
+      doc.setFontSize(8)
 
-          // Salvar o PDF
-          doc.save(`relatorio-financeiro-${dataInicio}-${dataFim}.pdf`)
+      allData.forEach((mov: any, index) => {
+        if (yPosition > 275) {
+          // Nova página se necessário
+          doc.addPage()
+          yPosition = 20
 
-          toast({
-            title: "Relatório exportado",
-            description: "O relatório foi baixado em formato PDF com sucesso.",
-          })
-        })
-        .catch((error) => {
-          console.error("Erro ao gerar PDF:", error)
-          toast({
-            title: "Erro",
-            description: "Não foi possível gerar o relatório PDF.",
-            variant: "destructive",
-          })
-        })
+          // Repetir cabeçalho na nova página
+          doc.setFont("helvetica", "bold")
+          doc.setFontSize(9)
+          doc.line(10, yPosition, 200, yPosition)
+          yPosition += 2
+          doc.text("Data/Hora", 12, yPosition)
+          doc.text("Produto", 40, yPosition)
+          doc.text("Tipo", 85, yPosition)
+          doc.text("Responsável", 105, yPosition)
+          doc.text("Qtd", 145, yPosition)
+          doc.text("Valor Unit.", 160, yPosition)
+          doc.text("Valor Total", 180, yPosition)
+          yPosition += 4
+          doc.line(10, yPosition, 200, yPosition)
+          yPosition += 3
+          doc.setFont("helvetica", "normal")
+          doc.setFontSize(8)
+        }
+
+        const valorUnitario = mov.produtos?.preco_venda || 0
+        const valorTotal = valorUnitario * mov.quantidade
+        const responsavel = mov.funcionarios?.nome || "N/A"
+        const tipoMovimentacao = mov.tipo === "entrada" ? "Entrada" : "Saída"
+
+        // Linha de dados
+        doc.text(formatDate(mov.created_at), 12, yPosition)
+
+        // Truncar nome do produto se muito longo
+        const produtoNome = mov.produtos?.nome || "N/A"
+        const produtoTruncado = produtoNome.length > 20 ? produtoNome.substring(0, 20) + "..." : produtoNome
+        doc.text(produtoTruncado, 40, yPosition)
+
+        // Tipo de movimentação
+        doc.text(tipoMovimentacao, 85, yPosition)
+
+        // Truncar nome do responsável se muito longo
+        const responsavelTruncado = responsavel.length > 12 ? responsavel.substring(0, 12) + "..." : responsavel
+        doc.text(responsavelTruncado, 105, yPosition)
+
+        doc.text(mov.quantidade.toString(), 147, yPosition)
+        doc.text(formatCurrency(valorUnitario), 160, yPosition)
+        doc.text(formatCurrency(valorTotal), 180, yPosition)
+
+        yPosition += 4
+
+        // Linha separadora a cada linha
+        if (index < allData.length - 1) {
+          doc.line(10, yPosition - 1, 200, yPosition - 1)
+        }
+      })
+
+      // Linha final da tabela
+      doc.line(10, yPosition, 200, yPosition)
+
+      // Rodapé com margem reduzida
+      const totalPages = doc.getNumberOfPages()
+      for (let i = 1; i <= totalPages; i++) {
+        doc.setPage(i)
+        doc.setFontSize(7)
+        doc.text(`Página ${i} de ${totalPages} - CPB Stock`, 10, 290)
+      }
+
+      // Salvar o PDF
+      const fileName = `relatorio-financeiro-${dataInicio}-${dataFim}.pdf`
+      doc.save(fileName)
+
+      toast({
+        title: "Relatório exportado",
+        description: "O relatório foi baixado em formato PDF com sucesso.",
+      })
     } catch (error) {
-      console.error("Erro ao exportar relatório:", error)
       toast({
         title: "Erro",
-        description: "Não foi possível exportar o relatório.",
+        description: `Não foi possível exportar o relatório: ${error instanceof Error ? error.message : "Erro desconhecido"}`,
         variant: "destructive",
       })
+    } finally {
+      setExportingPDF(false)
     }
   }
 
   // Renderiza os números de página para a paginação
   const renderPagination = () => {
-    const pages = []
+    const pages: React.ReactNode[] = []
     const maxVisiblePages = 5
+
+    if (totalPages <= 1) return pages
 
     // Sempre mostrar a primeira página
     pages.push(
@@ -441,9 +551,9 @@ export function Financeiro() {
           <Filter className="h-4 w-4 mr-2" />
           {showFilters ? "Ocultar Filtros" : "Mostrar Filtros"}
         </Button>
-        <Button onClick={exportarRelatorio}>
+        <Button onClick={exportarRelatorio} disabled={exportingPDF}>
           <Download className="h-4 w-4 mr-2" />
-          PDF
+          {exportingPDF ? "Gerando..." : "PDF"}
         </Button>
       </div>
 
@@ -485,9 +595,9 @@ export function Financeiro() {
 
             <div className="space-y-2 hidden md:block">
               <Label>&nbsp;</Label>
-              <Button onClick={exportarRelatorio} className="w-full">
+              <Button onClick={exportarRelatorio} className="w-full" disabled={exportingPDF}>
                 <Download className="h-4 w-4 mr-2" />
-                Exportar PDF
+                {exportingPDF ? "Gerando PDF..." : "Exportar PDF"}
               </Button>
             </div>
           </div>
@@ -554,6 +664,9 @@ export function Financeiro() {
               <Package className="mx-auto h-12 w-12 text-gray-400" />
               <h3 className="mt-2 text-sm font-medium text-gray-900">Nenhuma venda encontrada</h3>
               <p className="mt-1 text-sm text-gray-500">Não há vendas registradas no período selecionado.</p>
+              <Button variant="outline" className="mt-4" onClick={() => setPeriodo("mes")}>
+                Ver vendas do mês
+              </Button>
             </div>
           )}
 

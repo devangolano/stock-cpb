@@ -5,7 +5,7 @@ import { supabase } from "@/lib/supabase"
 import { Card, CardContent } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Package, AlertCircle, ShellIcon as Shelf, Search, ArrowLeft, Edit, Trash2 } from "lucide-react"
+import { Package, AlertCircle, ShellIcon as Shelf, Search, ArrowLeft, Edit, Trash2, Plus } from 'lucide-react'
 import { Badge } from "@/components/ui/badge"
 import { useToast } from "@/hooks/use-toast"
 
@@ -52,6 +52,16 @@ export function Dashboard({
   const itemsPerPage = 10
   const [editingStock, setEditingStock] = useState<string | null>(null)
   const [tempStockValue, setTempStockValue] = useState<number>(0)
+
+  // Debug: verificar se as funções foram passadas
+  useEffect(() => {
+    console.log("Dashboard props:", {
+      onNavigateToCreate: !!onNavigateToCreate,
+      onNavigateToEdit: !!onNavigateToEdit,
+      onNavigateToView: !!onNavigateToView,
+      onNavigateToProduct: !!onNavigateToProduct,
+    })
+  }, [onNavigateToCreate, onNavigateToEdit, onNavigateToView, onNavigateToProduct])
 
   useEffect(() => {
     loadPrateleiras()
@@ -163,8 +173,11 @@ export function Dashboard({
   }
 
   const handleProductClick = (productId: string) => {
+    console.log("Clicou no produto:", productId)
     if (onNavigateToProduct) {
       onNavigateToProduct(productId)
+    } else {
+      console.log("onNavigateToProduct não foi fornecida")
     }
   }
 
@@ -304,10 +317,10 @@ export function Dashboard({
                 {searchTerm && ` (filtrado de ${produtosPrateleira.length})`}
               </p>
             </div>
-            <Button onClick={onNavigateToCreate} className="w-full sm:w-auto">
-              <Package className="mr-2 h-4 w-4" />
-              Novo Produto
-            </Button>
+             <Button onClick={onNavigateToCreate} className="w-full sm:w-auto">
+          <Plus className="mr-2 h-4 w-4" />
+          Novo Produto
+        </Button>
           </div>
         </div>
 
@@ -324,7 +337,7 @@ export function Dashboard({
           </div>
         </div>
 
-        {/* Tabela Responsiva de Produtos - IGUAL À PÁGINA DE PRODUTOS */}
+        {/* Tabela Responsiva de Produtos */}
         <Card className="shadow-sm">
           <CardContent className="p-0">
             {filteredProdutos.length > 0 ? (
@@ -363,7 +376,6 @@ export function Dashboard({
                                 </div>
                                 <div className="text-xs text-gray-500 flex items-center gap-2">
                                   <span className="font-mono bg-gray-100 px-1 rounded">{produto.codigo}</span>
-                                  {/* Mostrar estoque mobile apenas em telas pequenas */}
                                   <span className="sm:hidden text-blue-600 font-medium">
                                     L:{produto.estoque_loja} A:{produto.estoque_armazem}
                                   </span>
@@ -377,7 +389,6 @@ export function Dashboard({
                             </div>
                           </td>
 
-                          {/* Colunas ocultas no mobile */}
                           <td
                             className="py-2 px-3 text-center hidden sm:table-cell"
                             onClick={(e) => e.stopPropagation()}
@@ -434,7 +445,6 @@ export function Dashboard({
                             </span>
                           </td>
 
-                          {/* Preço oculto no mobile */}
                           <td className="py-2 px-4 text-right hidden md:table-cell">
                             <span className="text-sm font-medium text-gray-900">
                               {formatCurrency(produto.preco_venda)}
@@ -443,7 +453,6 @@ export function Dashboard({
 
                           <td className="py-2 px-3" onClick={(e) => e.stopPropagation()}>
                             <div className="flex justify-center gap-1">
-                              {/* Mobile: apenas editar e excluir */}
                               <div className="sm:hidden flex gap-1">
                                 <Button
                                   variant="ghost"
@@ -469,7 +478,6 @@ export function Dashboard({
                                 </Button>
                               </div>
 
-                              {/* Desktop: todos os botões */}
                               <div className="hidden sm:flex gap-1">
                                 <Button
                                   variant="ghost"
@@ -502,10 +510,9 @@ export function Dashboard({
                   </table>
                 </div>
 
-                {/* Paginação Responsiva */}
+                {/* Paginação */}
                 {totalPages > 1 && (
                   <div className="flex flex-col items-center justify-center px-4 py-3 bg-gray-50 border-t border-gray-200 gap-3">
-                    {/* Informação de páginas - sempre visível */}
                     <div className="text-sm text-gray-700 text-center">
                       <span className="hidden sm:inline">
                         Mostrando {startIndex + 1} a {Math.min(endIndex, filteredProdutos.length)} de{" "}
@@ -516,7 +523,6 @@ export function Dashboard({
                       </span>
                     </div>
 
-                    {/* Controles de paginação - sempre visível */}
                     <div className="flex items-center justify-center gap-2 w-full">
                       <Button
                         variant="outline"
@@ -529,16 +535,13 @@ export function Dashboard({
                         <span className="sm:hidden">‹</span>
                       </Button>
 
-                      {/* Indicador de página atual - sempre visível */}
                       <div className="flex items-center gap-1">
-                        {/* Mobile: mostrar apenas página atual */}
                         <div className="sm:hidden">
                           <span className="px-3 py-1 text-sm font-medium bg-white border rounded">
                             {currentPage} / {totalPages}
                           </span>
                         </div>
 
-                        {/* Desktop: mostrar números das páginas */}
                         <div className="hidden sm:flex items-center gap-1">
                           {Array.from({ length: totalPages }, (_, i) => i + 1)
                             .filter((page) => {
@@ -595,7 +598,7 @@ export function Dashboard({
                     : "Esta prateleira não possui produtos cadastrados ainda."}
                 </p>
                 <Button variant="outline" onClick={onNavigateToCreate} className="mt-2">
-                  <Package className="mr-2 h-4 w-4" />
+                  <Plus className="mr-2 h-4 w-4" />
                   Adicionar Produto
                 </Button>
               </div>
