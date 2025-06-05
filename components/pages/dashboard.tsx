@@ -5,7 +5,7 @@ import { supabase } from "@/lib/supabase"
 import { Card, CardContent } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Package, AlertCircle, ShellIcon as Shelf, Search, ArrowLeft, Eye, Edit, Trash2 } from "lucide-react"
+import { Package, AlertCircle, ShellIcon as Shelf, Search, ArrowLeft, Edit, Trash2 } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { useToast } from "@/hooks/use-toast"
 
@@ -50,6 +50,8 @@ export function Dashboard({
   const [error, setError] = useState<string | null>(null)
   const [currentPage, setCurrentPage] = useState(1)
   const itemsPerPage = 10
+  const [editingStock, setEditingStock] = useState<string | null>(null)
+  const [tempStockValue, setTempStockValue] = useState<number>(0)
 
   useEffect(() => {
     loadPrateleiras()
@@ -195,6 +197,38 @@ export function Dashboard({
     }
   }
 
+  const handleSaveStock = async (productId: string, newStock: number) => {
+    try {
+      const { error } = await supabase.from("produtos").update({ estoque_loja: newStock }).eq("id", productId)
+
+      if (error) throw error
+
+      toast({
+        title: "Estoque atualizado",
+        description: "A quantidade da loja foi atualizada com sucesso.",
+      })
+
+      // Recarregar produtos da prateleira
+      if (prateleiraAtual) {
+        loadProdutosPrateleira(prateleiraAtual)
+      }
+
+      setEditingStock(null)
+    } catch (error) {
+      console.error("Erro ao atualizar estoque:", error)
+      toast({
+        title: "Erro",
+        description: "Não foi possível atualizar o estoque.",
+        variant: "destructive",
+      })
+    }
+  }
+
+  const handleCancelEdit = () => {
+    setEditingStock(null)
+    setTempStockValue(0)
+  }
+
   // Filter products based on search term
   const filteredProdutos = produtosPrateleira.filter(
     (produto) =>
@@ -313,9 +347,10 @@ export function Dashboard({
                       {currentProdutos.map((produto, index) => (
                         <tr
                           key={produto.id}
-                          className={`border-b border-gray-100 hover:bg-blue-50 transition-colors ${
+                          className={`border-b border-gray-100 hover:bg-blue-50 transition-colors cursor-pointer ${
                             index % 2 === 0 ? "bg-white" : "bg-gray-50"
                           }`}
+                          onClick={() => handleProductClick(produto.id)}
                         >
                           <td className="py-2 px-4">
                             <div className="flex items-center gap-2">
@@ -343,10 +378,49 @@ export function Dashboard({
                           </td>
 
                           {/* Colunas ocultas no mobile */}
-                          <td className="py-2 px-3 text-center hidden sm:table-cell">
-                            <span className="inline-flex items-center justify-center w-8 h-6 bg-blue-100 text-blue-700 rounded text-xs font-medium">
-                              {produto.estoque_loja}
-                            </span>
+                          <td
+                            className="py-2 px-3 text-center hidden sm:table-cell"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            {editingStock === produto.id ? (
+                              <div className="flex items-center gap-1">
+                                <Input
+                                  type="number"
+                                  value={tempStockValue}
+                                  onChange={(e) => setTempStockValue(Number(e.target.value))}
+                                  className="w-16 h-6 text-xs text-center p-1"
+                                  min="0"
+                                  autoFocus
+                                  onKeyDown={(e) => {
+                                    if (e.key === "Enter") {
+                                      handleSaveStock(produto.id, tempStockValue)
+                                    } else if (e.key === "Escape") {
+                                      handleCancelEdit()
+                                    }
+                                  }}
+                                />
+                                <Button
+                                  size="sm"
+                                  onClick={() => handleSaveStock(produto.id, tempStockValue)}
+                                  className="h-6 w-6 p-0"
+                                >
+                                  ✓
+                                </Button>
+                                <Button size="sm" variant="outline" onClick={handleCancelEdit} className="h-6 w-6 p-0">
+                                  ✕
+                                </Button>
+                              </div>
+                            ) : (
+                              <span
+                                className="inline-flex items-center justify-center w-8 h-6 bg-blue-100 text-blue-700 rounded text-xs font-medium cursor-pointer hover:bg-blue-200"
+                                onClick={() => {
+                                  setEditingStock(produto.id)
+                                  setTempStockValue(produto.estoque_loja)
+                                }}
+                              >
+                                {produto.estoque_loja}
+                              </span>
+                            )}
                           </td>
                           <td className="py-2 px-3 text-center hidden sm:table-cell">
                             <span className="inline-flex items-center justify-center w-8 h-6 bg-green-100 text-green-700 rounded text-xs font-medium">
@@ -367,14 +441,17 @@ export function Dashboard({
                             </span>
                           </td>
 
-                          <td className="py-2 px-3">
+                          <td className="py-2 px-3" onClick={(e) => e.stopPropagation()}>
                             <div className="flex justify-center gap-1">
                               {/* Mobile: apenas editar e excluir */}
                               <div className="sm:hidden flex gap-1">
                                 <Button
                                   variant="ghost"
                                   size="sm"
-                                  onClick={() => onNavigateToEdit?.(produto.id)}
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    onNavigateToEdit?.(produto.id)
+                                  }}
                                   className="h-7 w-7 p-0 hover:bg-green-100"
                                 >
                                   <Edit className="h-3 w-3" />
@@ -382,7 +459,10 @@ export function Dashboard({
                                 <Button
                                   variant="ghost"
                                   size="sm"
-                                  onClick={() => handleDeleteProduct(produto.id, produto.nome)}
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    handleDeleteProduct(produto.id, produto.nome)
+                                  }}
                                   className="h-7 w-7 p-0 hover:bg-red-100 text-red-600"
                                 >
                                   <Trash2 className="h-3 w-3" />
@@ -394,15 +474,10 @@ export function Dashboard({
                                 <Button
                                   variant="ghost"
                                   size="sm"
-                                  onClick={() => onNavigateToView?.(produto.id)}
-                                  className="h-7 w-7 p-0 hover:bg-blue-100"
-                                >
-                                  <Eye className="h-3 w-3" />
-                                </Button>
-                                <Button
-                                  variant="ghost"
-                                  size="sm"
-                                  onClick={() => onNavigateToEdit?.(produto.id)}
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    onNavigateToEdit?.(produto.id)
+                                  }}
                                   className="h-7 w-7 p-0 hover:bg-green-100"
                                 >
                                   <Edit className="h-3 w-3" />
@@ -410,7 +485,10 @@ export function Dashboard({
                                 <Button
                                   variant="ghost"
                                   size="sm"
-                                  onClick={() => handleDeleteProduct(produto.id, produto.nome)}
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    handleDeleteProduct(produto.id, produto.nome)
+                                  }}
                                   className="h-7 w-7 p-0 hover:bg-red-100 text-red-600"
                                 >
                                   <Trash2 className="h-3 w-3" />
