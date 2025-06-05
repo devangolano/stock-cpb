@@ -48,6 +48,10 @@ export function Produtos({ onNavigateToCreate, onNavigateToEdit, onNavigateToVie
   const [currentPage, setCurrentPage] = useState(1)
   const itemsPerPage = 10
 
+  // Estados para edição inline de estoque
+  const [editingStock, setEditingStock] = useState<string | null>(null)
+  const [tempStockValue, setTempStockValue] = useState<number>(0)
+
   useEffect(() => {
     loadPrateleirasComProdutos()
   }, [])
@@ -164,6 +168,40 @@ export function Produtos({ onNavigateToCreate, onNavigateToEdit, onNavigateToVie
     setProdutos([])
     setSearchTerm("")
     setCurrentPage(1)
+  }
+
+  // Função para salvar estoque editado
+  const handleSaveStock = async (productId: string, newStock: number) => {
+    try {
+      const { error } = await supabase.from("produtos").update({ estoque_loja: newStock }).eq("id", productId)
+
+      if (error) throw error
+
+      toast({
+        title: "Estoque atualizado",
+        description: "A quantidade da loja foi atualizada com sucesso.",
+      })
+
+      // Recarregar produtos da prateleira
+      if (prateleiraAtual) {
+        loadProdutosPrateleira(prateleiraAtual)
+      }
+
+      setEditingStock(null)
+    } catch (error) {
+      console.error("Erro ao atualizar estoque:", error)
+      toast({
+        title: "Erro",
+        description: "Não foi possível atualizar o estoque.",
+        variant: "destructive",
+      })
+    }
+  }
+
+  // Função para cancelar edição
+  const handleCancelEdit = () => {
+    setEditingStock(null)
+    setTempStockValue(0)
   }
 
   const filteredProdutos = produtos.filter(
@@ -338,12 +376,52 @@ export function Produtos({ onNavigateToCreate, onNavigateToEdit, onNavigateToVie
                             </div>
                           </td>
 
-                          {/* Colunas ocultas no mobile */}
-                          <td className="py-2 px-3 text-center hidden sm:table-cell">
-                            <span className="inline-flex items-center justify-center w-8 h-6 bg-blue-100 text-blue-700 rounded text-xs font-medium">
-                              {produto.estoque_loja}
-                            </span>
+                          {/* Coluna Loja com edição inline */}
+                          <td
+                            className="py-2 px-3 text-center hidden sm:table-cell"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            {editingStock === produto.id ? (
+                              <div className="flex items-center gap-1">
+                                <Input
+                                  type="number"
+                                  value={tempStockValue}
+                                  onChange={(e) => setTempStockValue(Number(e.target.value))}
+                                  className="w-16 h-6 text-xs text-center p-1"
+                                  min="0"
+                                  autoFocus
+                                  onKeyDown={(e) => {
+                                    if (e.key === "Enter") {
+                                      handleSaveStock(produto.id, tempStockValue)
+                                    } else if (e.key === "Escape") {
+                                      handleCancelEdit()
+                                    }
+                                  }}
+                                />
+                                <Button
+                                  size="sm"
+                                  onClick={() => handleSaveStock(produto.id, tempStockValue)}
+                                  className="h-6 w-6 p-0"
+                                >
+                                  ✓
+                                </Button>
+                                <Button size="sm" variant="outline" onClick={handleCancelEdit} className="h-6 w-6 p-0">
+                                  ✕
+                                </Button>
+                              </div>
+                            ) : (
+                              <span
+                                className="inline-flex items-center justify-center w-8 h-6 bg-blue-100 text-blue-700 rounded text-xs font-medium cursor-pointer hover:bg-blue-200"
+                                onClick={() => {
+                                  setEditingStock(produto.id)
+                                  setTempStockValue(produto.estoque_loja)
+                                }}
+                              >
+                                {produto.estoque_loja}
+                              </span>
+                            )}
                           </td>
+
                           <td className="py-2 px-3 text-center hidden sm:table-cell">
                             <span className="inline-flex items-center justify-center w-8 h-6 bg-green-100 text-green-700 rounded text-xs font-medium">
                               {produto.estoque_armazem}
